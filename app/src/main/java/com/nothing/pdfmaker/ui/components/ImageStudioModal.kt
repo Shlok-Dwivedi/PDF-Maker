@@ -1,5 +1,6 @@
 package com.nothing.pdfmaker.ui.components
 
+import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -48,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,6 +57,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -67,8 +70,10 @@ import com.nothing.pdfmaker.ui.theme.NothingGray
 import com.nothing.pdfmaker.ui.theme.NothingRed
 import com.nothing.pdfmaker.ui.theme.NothingSurface
 import com.nothing.pdfmaker.ui.theme.NothingWhite
+import com.nothing.pdfmaker.util.BitmapUtil
 import com.nothing.pdfmaker.util.DocumentFilter
 import com.nothing.pdfmaker.util.PageItem
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -78,6 +83,8 @@ fun ImageStudioModal(
     onGeneratePdf: (pages: List<PageItem>, fitToA4: Boolean, docTitle: String) -> Unit,
     isGenerating: Boolean = false
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val pages = remember {
@@ -89,7 +96,36 @@ fun ImageStudioModal(
     var selectedFilter by remember { mutableStateOf(DocumentFilter.ORIGINAL) }
     var fitToA4 by remember { mutableStateOf(true) }
     var docTitle by remember { mutableStateOf("Scanned_Document") }
+
+    // State for 8-Point Crop Screen
     var croppingPageIndex by remember { mutableStateOf<Int?>(null) }
+    var croppingBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    // If active 8-point crop is open, display it over the studio
+    if (croppingBitmap != null && croppingPageIndex != null) {
+        val targetIndex = croppingPageIndex!!
+        EightPointCropScreen(
+            bitmap = croppingBitmap!!,
+            onCropCompleted = { croppedBitmap ->
+                scope.launch {
+                    val newUri = BitmapUtil.saveCroppedBitmap(context, croppedBitmap)
+                    if (newUri != null && targetIndex < pages.size) {
+                        pages[targetIndex] = pages[targetIndex].copy(
+                            uri = newUri,
+                            rotationDegrees = 0f
+                        )
+                    }
+                    croppingBitmap = null
+                    croppingPageIndex = null
+                }
+            },
+            onCancel = {
+                croppingBitmap = null
+                croppingPageIndex = null
+            }
+        )
+        return
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -156,9 +192,9 @@ fun ImageStudioModal(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Horizontal Page Preview & Rotation
+            // Horizontal Page Preview & 8-Point Crop Actions
             Text(
-                text = "PAGES & ORIENTATION",
+                text = "PAGES & 8-POINT CROP",
                 color = NothingGray,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
@@ -175,7 +211,7 @@ fun ImageStudioModal(
                 itemsIndexed(pages) { index, pageItem ->
                     Box(
                         modifier = Modifier
-                            .size(110.dp, 150.dp)
+                            .size(120.dp, 160.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(NothingSurface)
                     ) {
@@ -193,7 +229,7 @@ fun ImageStudioModal(
                             modifier = Modifier
                                 .align(Alignment.TopStart)
                                 .padding(6.dp)
-                                .background(NothingBlack.copy(alpha = 0.8f), RoundedCornerShape(4.dp))
+                                .background(NothingBlack.copy(alpha = 0.85f), RoundedCornerShape(4.dp))
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
@@ -205,54 +241,13 @@ fun ImageStudioModal(
                             )
                         }
 
-                        // Rotate button
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomStart)
-                                .padding(6.dp)
-                                .size(28.dp)
-                                .background(NothingBlack.copy(alpha = 0.8f), CircleShape)
-                                .clickable {
-                                    pageItem.rotationDegrees = (pageItem.rotationDegrees + 90f) % 360f
-                                    pages[index] = pageItem.copy(rotationDegrees = pageItem.rotationDegrees)
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.RotateRight,
-                                contentDescription = "Rotate",
-                                tint = NothingWhite,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-
-                        // 8-Point Crop button
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(6.dp)
-                                .size(28.dp)
-                                .background(NothingBlack.copy(alpha = 0.8f), CircleShape)
-                                .clickable {
-                                    croppingPageIndex = index
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Crop,
-                                contentDescription = "8-Point Crop",
-                                tint = NothingWhite,
-                                modifier = Modifier.size(15.dp)
-                            )
-                        }
-
                         // Remove button
                         Box(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
                                 .padding(6.dp)
                                 .size(28.dp)
-                                .background(NothingBlack.copy(alpha = 0.8f), CircleShape)
+                                .background(NothingBlack.copy(alpha = 0.85f), CircleShape)
                                 .clickable {
                                     pages.removeAt(index)
                                 },
@@ -262,8 +257,72 @@ fun ImageStudioModal(
                                 imageVector = Icons.Default.Delete,
                                 contentDescription = "Remove",
                                 tint = NothingRed,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(15.dp)
                             )
+                        }
+
+                        // Bottom Actions: 8-Point Crop and Rotate
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .background(NothingBlack.copy(alpha = 0.85f))
+                                .padding(vertical = 4.dp, horizontal = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceAround,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // 8-Point Crop Button
+                            Box(
+                                modifier = Modifier
+                                    .clickable {
+                                        scope.launch {
+                                            val b = BitmapUtil.loadBitmap(context, pageItem.uri)
+                                            if (b != null) {
+                                                croppingBitmap = b
+                                                croppingPageIndex = index
+                                            }
+                                        }
+                                    }
+                                    .padding(4.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Crop,
+                                        contentDescription = "8-Pt Crop",
+                                        tint = NothingWhite,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Text(
+                                        text = "8-PT",
+                                        color = NothingWhite,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                            }
+
+                            // Rotate Button
+                            Box(
+                                modifier = Modifier
+                                    .clickable {
+                                        pageItem.rotationDegrees = (pageItem.rotationDegrees + 90f) % 360f
+                                        pages[index] = pageItem.copy(rotationDegrees = pageItem.rotationDegrees)
+                                    }
+                                    .padding(4.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.RotateRight,
+                                    contentDescription = "Rotate",
+                                    tint = NothingWhite,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -271,7 +330,7 @@ fun ImageStudioModal(
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // Document Enhancement Filters (Office Lens Style)
+            // Document Enhancement Filters (Natural true colors)
             Text(
                 text = "DOCUMENT FILTERS",
                 color = NothingGray,
@@ -403,20 +462,6 @@ fun ImageStudioModal(
                         letterSpacing = 1.sp
                     )
                 }
-            }
-        }
-
-        // 8-Point Crop Dialog
-        croppingPageIndex?.let { idx ->
-            if (idx in pages.indices) {
-                EightPointCropDialog(
-                    imageUri = pages[idx].uri,
-                    onDismiss = { croppingPageIndex = null },
-                    onCropped = { newUri ->
-                        pages[idx] = pages[idx].copy(uri = newUri)
-                        croppingPageIndex = null
-                    }
-                )
             }
         }
     }

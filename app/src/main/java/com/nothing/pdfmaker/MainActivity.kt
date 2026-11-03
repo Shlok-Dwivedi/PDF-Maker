@@ -1,6 +1,7 @@
 package com.nothing.pdfmaker
 
 import android.app.Activity
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
@@ -24,7 +25,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -50,12 +51,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
 import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import com.nothing.pdfmaker.model.ScannedDocument
 import com.nothing.pdfmaker.ui.components.DocumentItem
-import com.nothing.pdfmaker.ui.components.EightPointCropDialog
+import com.nothing.pdfmaker.ui.components.EightPointCropScreen
 import com.nothing.pdfmaker.ui.components.ImageStudioModal
 import com.nothing.pdfmaker.ui.components.NothingHeader
 import com.nothing.pdfmaker.ui.components.ScanColorMode
@@ -65,9 +67,11 @@ import com.nothing.pdfmaker.ui.theme.NothingGray
 import com.nothing.pdfmaker.ui.theme.NothingLensTheme
 import com.nothing.pdfmaker.ui.theme.NothingRed
 import com.nothing.pdfmaker.ui.theme.NothingWhite
+import com.nothing.pdfmaker.util.BitmapUtil
 import com.nothing.pdfmaker.util.ImageToPdfConverter
 import com.nothing.pdfmaker.util.PdfStorageManager
 import kotlinx.coroutines.launch
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -93,9 +97,11 @@ fun PDFMakerApp() {
     val savedDocuments = remember { mutableStateListOf<ScannedDocument>() }
     var selectedGalleryUris by remember { mutableStateOf<List<Uri>?>(null) }
     var isGeneratingFromGallery by remember { mutableStateOf(false) }
-    var direct8PointCropUri by remember { mutableStateOf<Uri?>(null) }
 
-    // Natural & Fast (SCANNER_MODE_BASE - zero saturation, instant) vs Full Filters
+    // 8-Point Crop State
+    var activeEightPointBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var pendingCameraCaptureUri by remember { mutableStateOf<Uri?>(null) }
+
     var currentScanMode by remember { mutableStateOf(ScanColorMode.NATURAL_FAST) }
 
     fun refreshDocuments() {
@@ -110,6 +116,34 @@ fun PDFMakerApp() {
         refreshDocuments()
     }
 
+    // High-Resolution Camera Capture for 8-Point Crop
+    val takePictureLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success && pendingCameraCaptureUri != null) {
+            scope.launch {
+                val b = BitmapUtil.loadBitmap(context, pendingCameraCaptureUri!!)
+                if (b != null) {
+                    activeEightPointBitmap = b
+                }
+            }
+        }
+    }
+
+    fun launchEightPointCamera() {
+        try {
+            val dir = File(context.filesDir, "camera_captures")
+            if (!dir.exists()) dir.mkdirs()
+            val file = File(dir, "capture_${System.currentTimeMillis()}.jpg")
+            val authority = "${context.packageName}.fileprovider"
+            val uri = FileProvider.getUriForFile(context, authority, file)
+            pendingCameraCaptureUri = uri
+            takePictureLauncher.launch(uri)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Camera error: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // Google ML Kit Document Scanner setup
     val scannerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult()
@@ -118,8 +152,7 @@ fun PDFMakerApp() {
             val result = GmsDocumentScanningResult.fromActivityResultIntent(activityResult.data)
             val pdf = result?.pdf
             if (pdf != null) {
-                // 1. Instant Optimistic UI display (zero wait time!)
-                val firstPageUri = result?.pages?.firstOrNull()?.imageUri
+                val firstPageUri = result.pages?.firstOrNull()?.imageUri
                 val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
                 val docName = "Scan_$timeStamp"
                 val tempDoc = ScannedDocument(
@@ -132,10 +165,8 @@ fun PDFMakerApp() {
                     lastModified = System.currentTimeMillis(),
                     thumbnailUri = firstPageUri
                 )
-                // Add to UI immediately so the user sees it without any delay
                 savedDocuments.add(0, tempDoc)
 
-                // 2. Fast background persist & thumbnail generation
                 scope.launch {
                     val savedDoc = PdfStorageManager.saveScannedPdf(
                         context = context,
@@ -166,13 +197,13 @@ fun PDFMakerApp() {
         }
     }
 
-    fun startScanning() {
+    fun startAutoScanning() {
         if (activity == null) return
 
         val scannerMode = if (currentScanMode == ScanColorMode.NATURAL_FAST) {
-            GmsDocumentScannerOptions.SCANNER_MODE_BASE // Fast & 100% natural colors (no over-saturation!)
+            GmsDocumentScannerOptions.SCANNER_MODE_BASE
         } else {
-            GmsDocumentScannerOptions.SCANNER_MODE_FULL // Document paper filter mode
+            GmsDocumentScannerOptions.SCANNER_MODE_FULL
         }
 
         val scannerOptions = GmsDocumentScannerOptions.Builder()
@@ -211,13 +242,22 @@ fun PDFMakerApp() {
         }
     }
 
-    // Single Photo Picker for 8-Point Dewarp Studio
-    val singlePhotoFor8PointPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
-            direct8PointCropUri = uri
-        }
+    // If full-screen 8-Point Crop is active, show it immediately
+    if (activeEightPointBitmap != null) {
+        EightPointCropScreen(
+            bitmap = activeEightPointBitmap!!,
+            onCropCompleted = { croppedBitmap ->
+                scope.launch {
+                    val croppedUri = BitmapUtil.saveCroppedBitmap(context, croppedBitmap)
+                    activeEightPointBitmap = null
+                    if (croppedUri != null) {
+                        selectedGalleryUris = listOf(croppedUri)
+                    }
+                }
+            },
+            onCancel = { activeEightPointBitmap = null }
+        )
+        return
     }
 
     Scaffold(
@@ -225,14 +265,14 @@ fun PDFMakerApp() {
         containerColor = NothingBlack,
         floatingActionButton = {
             FloatingActionButton(
-                onClick = { startScanning() },
+                onClick = { launchEightPointCamera() },
                 containerColor = NothingRed,
                 contentColor = NothingWhite,
                 shape = CircleShape
             ) {
                 Icon(
-                    imageVector = Icons.Default.CameraAlt,
-                    contentDescription = "Quick Scan"
+                    imageVector = Icons.Default.Crop,
+                    contentDescription = "8-Point Precision Crop"
                 )
             }
         }
@@ -254,12 +294,8 @@ fun PDFMakerApp() {
                     ScannerCards(
                         currentMode = currentScanMode,
                         onModeChange = { currentScanMode = it },
-                        onStartScan = { startScanning() },
-                        onStart8PointCrop = {
-                            singlePhotoFor8PointPicker.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                            )
-                        },
+                        onStartEightPointScan = { launchEightPointCamera() },
+                        onStartAutoScan = { startAutoScanning() },
                         onImportImages = {
                             galleryPicker.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -322,7 +358,7 @@ fun PDFMakerApp() {
                                     letterSpacing = 1.sp
                                 )
                                 Text(
-                                    text = "Tap 'SCAN DOCUMENT' to auto-detect pages or import pictures",
+                                    text = "Tap '8-POINT PRECISION CROP' to take a photo with 8-point handles",
                                     color = NothingGray.copy(alpha = 0.7f),
                                     fontSize = 12.sp
                                 )
@@ -391,19 +427,6 @@ fun PDFMakerApp() {
                             Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                         }
                     }
-                }
-            )
-        }
-
-        // Direct 8-Point Crop Dialog
-        direct8PointCropUri?.let { uri ->
-            EightPointCropDialog(
-                imageUri = uri,
-                onDismiss = { direct8PointCropUri = null },
-                onCropped = { croppedUri ->
-                    direct8PointCropUri = null
-                    // Open in studio so the user can review and generate PDF
-                    selectedGalleryUris = listOf(croppedUri)
                 }
             )
         }

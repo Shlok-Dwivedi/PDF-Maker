@@ -2,6 +2,7 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <files-path name="scanned_pdfs" path="scanned_pdfs/" />
     <files-path name="imported_images" path="imported_images/" />
+    <files-path name="camera_captures" path="camera_captures/" />
     <external-files-path name="ext_scanned_pdfs" path="scanned_pdfs/" />
     <external-path name="external" path="." />
 </paths>
