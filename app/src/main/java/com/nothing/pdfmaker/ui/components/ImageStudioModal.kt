@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.RotateRight
@@ -88,6 +89,7 @@ fun ImageStudioModal(
     var selectedFilter by remember { mutableStateOf(DocumentFilter.ORIGINAL) }
     var fitToA4 by remember { mutableStateOf(true) }
     var docTitle by remember { mutableStateOf("Scanned_Document") }
+    var croppingPageIndex by remember { mutableStateOf<Int?>(null) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -221,6 +223,26 @@ fun ImageStudioModal(
                                 contentDescription = "Rotate",
                                 tint = NothingWhite,
                                 modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+                        // 8-Point Crop button
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(6.dp)
+                                .size(28.dp)
+                                .background(NothingBlack.copy(alpha = 0.8f), CircleShape)
+                                .clickable {
+                                    croppingPageIndex = index
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Crop,
+                                contentDescription = "8-Point Crop",
+                                tint = NothingWhite,
+                                modifier = Modifier.size(15.dp)
                             )
                         }
 
@@ -381,6 +403,20 @@ fun ImageStudioModal(
                         letterSpacing = 1.sp
                     )
                 }
+            }
+        }
+
+        // 8-Point Crop Dialog
+        croppingPageIndex?.let { idx ->
+            if (idx in pages.indices) {
+                EightPointCropDialog(
+                    imageUri = pages[idx].uri,
+                    onDismiss = { croppingPageIndex = null },
+                    onCropped = { newUri ->
+                        pages[idx] = pages[idx].copy(uri = newUri)
+                        croppingPageIndex = null
+                    }
+                )
             }
         }
     }

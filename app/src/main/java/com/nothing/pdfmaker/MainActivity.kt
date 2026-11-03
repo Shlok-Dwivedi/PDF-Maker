@@ -55,6 +55,7 @@ import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import com.nothing.pdfmaker.model.ScannedDocument
 import com.nothing.pdfmaker.ui.components.DocumentItem
+import com.nothing.pdfmaker.ui.components.EightPointCropDialog
 import com.nothing.pdfmaker.ui.components.ImageStudioModal
 import com.nothing.pdfmaker.ui.components.NothingHeader
 import com.nothing.pdfmaker.ui.components.ScanColorMode
@@ -92,6 +93,7 @@ fun PDFMakerApp() {
     val savedDocuments = remember { mutableStateListOf<ScannedDocument>() }
     var selectedGalleryUris by remember { mutableStateOf<List<Uri>?>(null) }
     var isGeneratingFromGallery by remember { mutableStateOf(false) }
+    var direct8PointCropUri by remember { mutableStateOf<Uri?>(null) }
 
     // Natural & Fast (SCANNER_MODE_BASE - zero saturation, instant) vs Full Filters
     var currentScanMode by remember { mutableStateOf(ScanColorMode.NATURAL_FAST) }
@@ -209,6 +211,15 @@ fun PDFMakerApp() {
         }
     }
 
+    // Single Photo Picker for 8-Point Dewarp Studio
+    val singlePhotoFor8PointPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            direct8PointCropUri = uri
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = NothingBlack,
@@ -244,6 +255,11 @@ fun PDFMakerApp() {
                         currentMode = currentScanMode,
                         onModeChange = { currentScanMode = it },
                         onStartScan = { startScanning() },
+                        onStart8PointCrop = {
+                            singlePhotoFor8PointPicker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
                         onImportImages = {
                             galleryPicker.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -375,6 +391,19 @@ fun PDFMakerApp() {
                             Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
                         }
                     }
+                }
+            )
+        }
+
+        // Direct 8-Point Crop Dialog
+        direct8PointCropUri?.let { uri ->
+            EightPointCropDialog(
+                imageUri = uri,
+                onDismiss = { direct8PointCropUri = null },
+                onCropped = { croppedUri ->
+                    direct8PointCropUri = null
+                    // Open in studio so the user can review and generate PDF
+                    selectedGalleryUris = listOf(croppedUri)
                 }
             )
         }

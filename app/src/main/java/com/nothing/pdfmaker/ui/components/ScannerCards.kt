@@ -18,8 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ColorLens
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -51,6 +51,7 @@ fun ScannerCards(
     currentMode: ScanColorMode,
     onModeChange: (ScanColorMode) -> Unit,
     onStartScan: () -> Unit,
+    onStart8PointCrop: () -> Unit,
     onImportImages: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -116,7 +117,7 @@ fun ScannerCards(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.ColorLens,
+                        imageVector = Icons.Default.AutoFixHigh,
                         contentDescription = null,
                         tint = if (isFull) NothingBlack else NothingGray,
                         modifier = Modifier.size(16.dp)
@@ -222,6 +223,61 @@ fun ScannerCards(
                     fontSize = 13.sp,
                     lineHeight = 18.sp
                 )
+            }
+        }
+
+        // 8-Point Curved Crop Studio Card
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(18.dp))
+                .clickable { onStart8PointCrop() },
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF181A20)),
+            border = BorderStroke(1.dp, Color(0xFF382025))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(Color(0xFF2E151A), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CropFree,
+                        contentDescription = "8-Point Crop",
+                        tint = NothingRed,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(16.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "8-POINT CURVED CROP",
+                            color = NothingWhite,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 1.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "Straighten curved book pages with 4 corners + 4 edge handles",
+                        color = NothingGray,
+                        fontSize = 12.sp
+                    )
+                }
             }
         }
 
