@@ -14,6 +14,7 @@ import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -21,10 +22,10 @@ import java.util.Date
 import java.util.Locale
 
 enum class DocumentFilter {
-    ORIGINAL,
-    BLACK_AND_WHITE,
-    GRAYSCALE,
-    COLOR_ENHANCE
+    ORIGINAL,          // Pure camera sensor colors, 0 saturation modification
+    NATURAL_CLEAR,     // Balanced exposure with 1.0x neutral saturation (no color burn)
+    BLACK_AND_WHITE,   // High contrast clean document text (0% saturation)
+    GRAYSCALE          // Clean neutral grayscale (0% saturation)
 }
 
 data class PageItem(
@@ -58,7 +59,7 @@ object ImageToPdfConverter {
                     rawBitmap
                 }
 
-                // Apply filter
+                // Apply filter (strictly non-oversaturating)
                 val filteredBitmap = applyFilter(rotatedBitmap, pageItem.filter)
 
                 val pageWidth = if (fitToA4) A4_WIDTH else filteredBitmap.width
@@ -68,11 +69,10 @@ object ImageToPdfConverter {
                 val page = pdfDocument.startPage(pageInfo)
                 val canvas: Canvas = page.canvas
 
-                // Draw background white
+                // Background white
                 canvas.drawColor(Color.WHITE)
 
                 if (fitToA4) {
-                    // Fit inside A4 with margins
                     val margin = 20f
                     val targetWidth = pageWidth - (margin * 2)
                     val targetHeight = pageHeight - (margin * 2)
@@ -109,7 +109,7 @@ object ImageToPdfConverter {
         }
 
         val destFile = File(pdfsDir, fileName)
-        FileOutputStream(destFile).use { out ->
+        BufferedOutputStream(FileOutputStream(destFile), 64 * 1024).use { out ->
             pdfDocument.writeTo(out)
         }
         pdfDocument.close()
@@ -119,15 +119,13 @@ object ImageToPdfConverter {
 
     private fun loadBitmapFromUri(context: Context, uri: Uri): Bitmap? {
         return try {
-            // First decode bounds
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             context.contentResolver.openInputStream(uri)?.use { input ->
                 BitmapFactory.decodeStream(input, null, options)
             }
 
-            // Downsample if extremely huge (> 3000px) to conserve memory
             var sampleSize = 1
-            while (options.outWidth / sampleSize > 3000 || options.outHeight / sampleSize > 3000) {
+            while (options.outWidth / sampleSize > 2500 || options.outHeight / sampleSize > 2500) {
                 sampleSize *= 2
             }
 
@@ -146,25 +144,16 @@ object ImageToPdfConverter {
 
     private fun applyFilter(src: Bitmap, filter: DocumentFilter): Bitmap {
         return when (filter) {
-            DocumentFilter.ORIGINAL -> src
-            DocumentFilter.GRAYSCALE -> {
-                val dest = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
-                val canvas = Canvas(dest)
-                val paint = Paint()
-                val cm = ColorMatrix().apply { setSaturation(0f) }
-                paint.colorFilter = ColorMatrixColorFilter(cm)
-                canvas.drawBitmap(src, 0f, 0f, paint)
-                dest
-            }
-            DocumentFilter.BLACK_AND_WHITE -> {
-                // High contrast document filter: convert to grayscale then boost contrast to clean paper background
+            DocumentFilter.ORIGINAL -> src // 100% natural, untouched colors
+            DocumentFilter.NATURAL_CLEAR -> {
+                // Subtle contrast without ANY color saturation boost
                 val dest = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
                 val canvas = Canvas(dest)
                 val paint = Paint()
                 val cm = ColorMatrix().apply {
-                    setSaturation(0f)
-                    // High contrast curve
-                    val contrast = 1.8f
+                    setSaturation(1.0f) // Keep exact original saturation (no oversaturation)
+                    // Very gentle contrast improvement without blowing out highlights
+                    val contrast = 1.08f
                     val scale = contrast
                     val translate = (-0.5f * contrast + 0.5f) * 255f
                     val array = floatArrayOf(
@@ -179,16 +168,24 @@ object ImageToPdfConverter {
                 canvas.drawBitmap(src, 0f, 0f, paint)
                 dest
             }
-            DocumentFilter.COLOR_ENHANCE -> {
-                // Lift shadows and boost text readability
+            DocumentFilter.GRAYSCALE -> {
+                val dest = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(dest)
+                val paint = Paint()
+                val cm = ColorMatrix().apply { setSaturation(0f) }
+                paint.colorFilter = ColorMatrixColorFilter(cm)
+                canvas.drawBitmap(src, 0f, 0f, paint)
+                dest
+            }
+            DocumentFilter.BLACK_AND_WHITE -> {
                 val dest = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
                 val canvas = Canvas(dest)
                 val paint = Paint()
                 val cm = ColorMatrix().apply {
-                    setSaturation(1.3f)
-                    val contrast = 1.25f
+                    setSaturation(0f)
+                    val contrast = 1.6f
                     val scale = contrast
-                    val translate = (-0.5f * contrast + 0.5f) * 255f + 15f
+                    val translate = (-0.5f * contrast + 0.5f) * 255f
                     val array = floatArrayOf(
                         scale, 0f, 0f, 0f, translate,
                         0f, scale, 0f, 0f, translate,

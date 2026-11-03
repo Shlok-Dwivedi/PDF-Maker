@@ -10,6 +10,10 @@ import androidx.core.content.FileProvider
 import com.nothing.pdfmaker.model.ScannedDocument
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -20,6 +24,7 @@ object PdfStorageManager {
 
     private const val PDF_SUBDIR = "scanned_pdfs"
     private const val THUMB_SUBDIR = "thumbnails"
+    private const val METADATA_FILE = "documents_meta.json"
 
     fun getPdfsDirectory(context: Context): File {
         val dir = File(context.filesDir, PDF_SUBDIR)
@@ -33,10 +38,16 @@ object PdfStorageManager {
         return dir
     }
 
+    /**
+     * Fast-saves a newly scanned PDF.
+     * Uses the provided pageCount and optional first-page thumbnail Uri directly
+     * to avoid heavy synchronous PdfRenderer parsing.
+     */
     suspend fun saveScannedPdf(
         context: Context,
         sourceUri: Uri,
         pageCount: Int,
+        firstPageImageUri: Uri? = null,
         customTitle: String? = null
     ): ScannedDocument = withContext(Dispatchers.IO) {
         val pdfsDir = getPdfsDirectory(context)
@@ -48,27 +59,58 @@ object PdfStorageManager {
         }
 
         val destFile = File(pdfsDir, fileName)
-        context.contentResolver.openInputStream(sourceUri)?.use { input ->
-            FileOutputStream(destFile).use { output ->
-                input.copyTo(output)
+
+        // Fast buffered file copy
+        context.contentResolver.openInputStream(sourceUri)?.use { rawInput ->
+            BufferedInputStream(rawInput, 64 * 1024).use { input ->
+                BufferedOutputStream(FileOutputStream(destFile), 64 * 1024).use { output ->
+                    input.copyTo(output)
+                }
             }
         }
 
-        val thumbUri = generateThumbnailForPdf(context, destFile)
+        // Fast thumbnail handling:
+        // If we already have the first page JPEG from the scanner, use that directly!
+        // No need to initialize PdfRenderer to re-rasterize.
+        val thumbUri = if (firstPageImageUri != null) {
+            saveThumbnailFromImageUri(context, firstPageImageUri, destFile.nameWithoutExtension)
+        } else {
+            generateThumbnailForPdf(context, destFile)
+        }
 
         val authority = "${context.packageName}.fileprovider"
         val contentUri = FileProvider.getUriForFile(context, authority, destFile)
 
-        ScannedDocument(
+        val doc = ScannedDocument(
             id = destFile.name,
             name = destFile.nameWithoutExtension,
             fileUri = contentUri,
             filePath = destFile.absolutePath,
-            pageCount = if (pageCount > 0) pageCount else getPageCount(destFile),
+            pageCount = if (pageCount > 0) pageCount else 1,
             sizeBytes = destFile.length(),
             lastModified = destFile.lastModified(),
             thumbnailUri = thumbUri
         )
+
+        // Update persistent metadata cache
+        updateCachedMetadata(context, doc)
+
+        doc
+    }
+
+    private fun saveThumbnailFromImageUri(context: Context, imageUri: Uri, baseName: String): Uri? {
+        return try {
+            val thumbFile = File(getThumbnailsDirectory(context), "$baseName.jpg")
+            context.contentResolver.openInputStream(imageUri)?.use { input ->
+                FileOutputStream(thumbFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            val authority = "${context.packageName}.fileprovider"
+            FileProvider.getUriForFile(context, authority, thumbFile)
+        } catch (e: Exception) {
+            null
+        }
     }
 
     suspend fun loadSavedDocuments(context: Context): List<ScannedDocument> = withContext(Dispatchers.IO) {
@@ -77,12 +119,16 @@ object PdfStorageManager {
             ?: return@withContext emptyList()
 
         val authority = "${context.packageName}.fileprovider"
+        val metaMap = loadMetadataMap(context)
+
         files.sortedByDescending { it.lastModified() }.map { file ->
+            val cachedMeta = metaMap[file.name]
             val contentUri = try {
                 FileProvider.getUriForFile(context, authority, file)
             } catch (e: Exception) {
                 Uri.fromFile(file)
             }
+
             val thumbFile = File(getThumbnailsDirectory(context), "${file.nameWithoutExtension}.jpg")
             val thumbUri = if (thumbFile.exists()) {
                 try {
@@ -90,16 +136,16 @@ object PdfStorageManager {
                 } catch (e: Exception) {
                     Uri.fromFile(thumbFile)
                 }
-            } else {
-                generateThumbnailForPdf(context, file)
-            }
+            } else null
+
+            val pageCount = cachedMeta?.optInt("pageCount") ?: 1
 
             ScannedDocument(
                 id = file.name,
                 name = file.nameWithoutExtension,
                 fileUri = contentUri,
                 filePath = file.absolutePath,
-                pageCount = getPageCount(file),
+                pageCount = pageCount,
                 sizeBytes = file.length(),
                 lastModified = file.lastModified(),
                 thumbnailUri = thumbUri
@@ -107,15 +153,41 @@ object PdfStorageManager {
         }
     }
 
-    private fun getPageCount(pdfFile: File): Int {
+    private fun loadMetadataMap(context: Context): Map<String, JSONObject> {
+        val metaFile = File(context.filesDir, METADATA_FILE)
+        if (!metaFile.exists()) return emptyMap()
         return try {
-            ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                PdfRenderer(pfd).use { renderer ->
-                    renderer.pageCount
-                }
+            val jsonStr = metaFile.readText()
+            val obj = JSONObject(jsonStr)
+            val map = mutableMapOf<String, JSONObject>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                map[key] = obj.getJSONObject(key)
             }
+            map
         } catch (e: Exception) {
-            1
+            emptyMap()
+        }
+    }
+
+    private fun updateCachedMetadata(context: Context, doc: ScannedDocument) {
+        try {
+            val metaFile = File(context.filesDir, METADATA_FILE)
+            val obj = if (metaFile.exists()) {
+                try { JSONObject(metaFile.readText()) } catch (e: Exception) { JSONObject() }
+            } else JSONObject()
+
+            val docObj = JSONObject().apply {
+                put("name", doc.name)
+                put("pageCount", doc.pageCount)
+                put("sizeBytes", doc.sizeBytes)
+                put("lastModified", doc.lastModified)
+            }
+            obj.put(doc.id, docObj)
+            metaFile.writeText(obj.toString())
+        } catch (e: Exception) {
+            // Non-critical cache
         }
     }
 
@@ -125,8 +197,8 @@ object PdfStorageManager {
                 PdfRenderer(pfd).use { renderer ->
                     if (renderer.pageCount > 0) {
                         val page = renderer.openPage(0)
-                        val width = 300
-                        val height = (300f * page.height / page.width).toInt().coerceAtLeast(100)
+                        val width = 240
+                        val height = (240f * page.height / page.width).toInt().coerceAtLeast(80)
                         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
                         bitmap.eraseColor(android.graphics.Color.WHITE)
                         page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
@@ -135,7 +207,7 @@ object PdfStorageManager {
                         val thumbsDir = getThumbnailsDirectory(context)
                         val thumbFile = File(thumbsDir, "${pdfFile.nameWithoutExtension}.jpg")
                         FileOutputStream(thumbFile).use { fos ->
-                            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, fos)
+                            bitmap.compress(Bitmap.CompressFormat.JPEG, 80, fos)
                         }
                         val authority = "${context.packageName}.fileprovider"
                         FileProvider.getUriForFile(context, authority, thumbFile)
@@ -151,6 +223,19 @@ object PdfStorageManager {
         val file = File(doc.filePath)
         val thumbFile = File(getThumbnailsDirectory(context), "${file.nameWithoutExtension}.jpg")
         if (thumbFile.exists()) thumbFile.delete()
+
+        // Remove from metadata cache
+        try {
+            val metaFile = File(context.filesDir, METADATA_FILE)
+            if (metaFile.exists()) {
+                val obj = JSONObject(metaFile.readText())
+                obj.remove(doc.id)
+                metaFile.writeText(obj.toString())
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+
         return file.delete()
     }
 

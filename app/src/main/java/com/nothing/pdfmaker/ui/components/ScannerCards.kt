@@ -17,7 +17,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddPhotoAlternate
-import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -39,8 +41,15 @@ import com.nothing.pdfmaker.ui.theme.NothingRed
 import com.nothing.pdfmaker.ui.theme.NothingSurface
 import com.nothing.pdfmaker.ui.theme.NothingWhite
 
+enum class ScanColorMode {
+    NATURAL_FAST,   // SCANNER_MODE_BASE: 0 saturation boost, ultra-fast capture & crop
+    DOCUMENT_FULL   // SCANNER_MODE_FULL: full editing & paper filters
+}
+
 @Composable
 fun ScannerCards(
+    currentMode: ScanColorMode,
+    onModeChange: (ScanColorMode) -> Unit,
     onStartScan: () -> Unit,
     onImportImages: () -> Unit,
     modifier: Modifier = Modifier
@@ -51,7 +60,80 @@ fun ScannerCards(
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Main Scan Card (Office Lens Style with Auto-Crop)
+        // Mode Selector: Natural / Fast (No Over-saturation) vs Full Filter
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF141518), RoundedCornerShape(14.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            // Natural / Fast Pill
+            val isNatural = currentMode == ScanColorMode.NATURAL_FAST
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (isNatural) NothingWhite else Color.Transparent)
+                    .clickable { onModeChange(ScanColorMode.NATURAL_FAST) }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Bolt,
+                        contentDescription = null,
+                        tint = if (isNatural) NothingBlack else NothingGray,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "NATURAL & FAST",
+                        color = if (isNatural) NothingBlack else NothingGray,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 1.sp
+                    )
+                }
+            }
+
+            // Document Full Mode Pill
+            val isFull = currentMode == ScanColorMode.DOCUMENT_FULL
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (isFull) NothingWhite else Color.Transparent)
+                    .clickable { onModeChange(ScanColorMode.DOCUMENT_FULL) }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ColorLens,
+                        contentDescription = null,
+                        tint = if (isFull) NothingBlack else NothingGray,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "DOCUMENT FILTERS",
+                        color = if (isFull) NothingBlack else NothingGray,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace,
+                        letterSpacing = 1.sp
+                    )
+                }
+            }
+        }
+
+        // Main Scan Card
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -84,10 +166,13 @@ fun ScannerCards(
                         )
                     }
 
-                    // Badge: OfficeLens style Auto Crop
+                    // Badge indicating mode
                     Box(
                         modifier = Modifier
-                            .background(Color(0xFF261012), RoundedCornerShape(12.dp))
+                            .background(
+                                if (currentMode == ScanColorMode.NATURAL_FAST) Color(0xFF102615) else Color(0xFF261012),
+                                RoundedCornerShape(12.dp)
+                            )
                             .padding(horizontal = 10.dp, vertical = 4.dp)
                     ) {
                         Row(
@@ -97,11 +182,14 @@ fun ScannerCards(
                             Box(
                                 modifier = Modifier
                                     .size(6.dp)
-                                    .background(NothingRed, CircleShape)
+                                    .background(
+                                        if (currentMode == ScanColorMode.NATURAL_FAST) Color(0xFF4CAF50) else NothingRed,
+                                        CircleShape
+                                    )
                             )
                             Text(
-                                text = "AUTO-CROP",
-                                color = NothingRed,
+                                text = if (currentMode == ScanColorMode.NATURAL_FAST) "TRUE COLOR • INSTANT" else "AUTO-CROP • FILTERS",
+                                color = if (currentMode == ScanColorMode.NATURAL_FAST) Color(0xFF81C784) else NothingRed,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 fontFamily = FontFamily.Monospace,
@@ -125,7 +213,11 @@ fun ScannerCards(
                 Spacer(modifier = Modifier.height(6.dp))
 
                 Text(
-                    text = "Smart edge detection, auto-shutter capture, corner crop fine-tuning & PDF export just like Office Lens.",
+                    text = if (currentMode == ScanColorMode.NATURAL_FAST) {
+                        "Fast capture & auto-crop with 100% natural camera colors (no artificial saturation or delay)."
+                    } else {
+                        "Auto-crop with Google's full document enhancement filters and page tools."
+                    },
                     color = NothingGray,
                     fontSize = 13.sp,
                     lineHeight = 18.sp
@@ -175,7 +267,7 @@ fun ScannerCards(
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "Turn existing photos into clean PDF with filters",
+                        text = "Convert gallery photos into clean PDF without oversaturating",
                         color = NothingGray,
                         fontSize = 12.sp
                     )

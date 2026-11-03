@@ -266,10 +266,10 @@ fun ImageStudioModal(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 listOf(
-                    DocumentFilter.ORIGINAL to "Original",
+                    DocumentFilter.ORIGINAL to "Natural (Raw)",
+                    DocumentFilter.NATURAL_CLEAR to "Clear Tone",
                     DocumentFilter.BLACK_AND_WHITE to "B&W Doc",
-                    DocumentFilter.GRAYSCALE to "Grayscale",
-                    DocumentFilter.COLOR_ENHANCE to "Vibrant"
+                    DocumentFilter.GRAYSCALE to "Grayscale"
                 ).forEach { (filter, label) ->
                     val selected = selectedFilter == filter
                     FilterChip(

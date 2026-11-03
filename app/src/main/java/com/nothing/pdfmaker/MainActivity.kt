@@ -10,7 +10,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,6 +57,7 @@ import com.nothing.pdfmaker.model.ScannedDocument
 import com.nothing.pdfmaker.ui.components.DocumentItem
 import com.nothing.pdfmaker.ui.components.ImageStudioModal
 import com.nothing.pdfmaker.ui.components.NothingHeader
+import com.nothing.pdfmaker.ui.components.ScanColorMode
 import com.nothing.pdfmaker.ui.components.ScannerCards
 import com.nothing.pdfmaker.ui.theme.NothingBlack
 import com.nothing.pdfmaker.ui.theme.NothingGray
@@ -67,6 +67,9 @@ import com.nothing.pdfmaker.ui.theme.NothingWhite
 import com.nothing.pdfmaker.util.ImageToPdfConverter
 import com.nothing.pdfmaker.util.PdfStorageManager
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -90,6 +93,9 @@ fun PDFMakerApp() {
     var selectedGalleryUris by remember { mutableStateOf<List<Uri>?>(null) }
     var isGeneratingFromGallery by remember { mutableStateOf(false) }
 
+    // Natural & Fast (SCANNER_MODE_BASE - zero saturation, instant) vs Full Filters
+    var currentScanMode by remember { mutableStateOf(ScanColorMode.NATURAL_FAST) }
+
     fun refreshDocuments() {
         scope.launch {
             val docs = PdfStorageManager.loadSavedDocuments(context)
@@ -102,7 +108,7 @@ fun PDFMakerApp() {
         refreshDocuments()
     }
 
-    // Google ML Kit Document Scanner setup (with full auto-crop, edge detection & PDF mode)
+    // Google ML Kit Document Scanner setup
     val scannerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult()
     ) { activityResult ->
@@ -110,16 +116,40 @@ fun PDFMakerApp() {
             val result = GmsDocumentScanningResult.fromActivityResultIntent(activityResult.data)
             val pdf = result?.pdf
             if (pdf != null) {
+                // 1. Instant Optimistic UI display (zero wait time!)
+                val firstPageUri = result?.pages?.firstOrNull()?.imageUri
+                val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+                val docName = "Scan_$timeStamp"
+                val tempDoc = ScannedDocument(
+                    id = "$docName.pdf",
+                    name = docName,
+                    fileUri = pdf.uri,
+                    filePath = "",
+                    pageCount = pdf.pageCount,
+                    sizeBytes = 0,
+                    lastModified = System.currentTimeMillis(),
+                    thumbnailUri = firstPageUri
+                )
+                // Add to UI immediately so the user sees it without any delay
+                savedDocuments.add(0, tempDoc)
+
+                // 2. Fast background persist & thumbnail generation
                 scope.launch {
                     val savedDoc = PdfStorageManager.saveScannedPdf(
                         context = context,
                         sourceUri = pdf.uri,
-                        pageCount = pdf.pageCount
+                        pageCount = pdf.pageCount,
+                        firstPageImageUri = firstPageUri
                     )
-                    refreshDocuments()
+                    val index = savedDocuments.indexOfFirst { it.id == tempDoc.id }
+                    if (index != -1) {
+                        savedDocuments[index] = savedDoc
+                    } else {
+                        refreshDocuments()
+                    }
 
                     val snackbarResult = snackbarHostState.showSnackbar(
-                        message = "PDF created: ${savedDoc.name} (${savedDoc.pageCount} pages)",
+                        message = "PDF saved: ${savedDoc.name} (${savedDoc.pageCount} pages)",
                         actionLabel = "OPEN",
                         duration = SnackbarDuration.Short
                     )
@@ -134,24 +164,27 @@ fun PDFMakerApp() {
         }
     }
 
-    val scannerOptions = remember {
-        GmsDocumentScannerOptions.Builder()
+    fun startScanning() {
+        if (activity == null) return
+
+        val scannerMode = if (currentScanMode == ScanColorMode.NATURAL_FAST) {
+            GmsDocumentScannerOptions.SCANNER_MODE_BASE // Fast & 100% natural colors (no over-saturation!)
+        } else {
+            GmsDocumentScannerOptions.SCANNER_MODE_FULL // Document paper filter mode
+        }
+
+        val scannerOptions = GmsDocumentScannerOptions.Builder()
             .setGalleryImportAllowed(true)
             .setPageLimit(100)
             .setResultFormats(
                 GmsDocumentScannerOptions.RESULT_FORMAT_JPEG,
                 GmsDocumentScannerOptions.RESULT_FORMAT_PDF
             )
-            .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+            .setScannerMode(scannerMode)
             .build()
-    }
 
-    val scannerClient = remember {
-        GmsDocumentScanning.getClient(scannerOptions)
-    }
+        val scannerClient = GmsDocumentScanning.getClient(scannerOptions)
 
-    fun startScanning() {
-        if (activity == null) return
         scannerClient.getStartScanIntent(activity)
             .addOnSuccessListener { intentSender ->
                 scannerLauncher.launch(
@@ -208,6 +241,8 @@ fun PDFMakerApp() {
 
                 item {
                     ScannerCards(
+                        currentMode = currentScanMode,
+                        onModeChange = { currentScanMode = it },
                         onStartScan = { startScanning() },
                         onImportImages = {
                             galleryPicker.launch(
