@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nothing Lens</string>
+    <string name="scan_document">Scan Document</string>
+    <string name="import_images">Import Images</string>
+    <string name="my_documents">Recent Scans</string>
+</resources>

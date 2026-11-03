@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="nothing_black">#0B0C0E</color>
+    <color name="nothing_surface">#18191C</color>
+    <color name="nothing_surface_variant">#24262B</color>
+    <color name="nothing_white">#F5F5F7</color>
+    <color name="nothing_red">#D71921</color>
+    <color name="nothing_gray">#8A8C91</color>
+</resources>
