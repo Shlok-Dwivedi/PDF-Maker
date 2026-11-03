@@ -1,6 +1,7 @@
 package com.nothing.pdfmaker
 
 import android.app.Activity
+import android.content.Context
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
@@ -25,10 +26,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -51,7 +53,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.FileProvider
 import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
@@ -60,10 +61,8 @@ import com.nothing.pdfmaker.ui.components.DocumentItem
 import com.nothing.pdfmaker.ui.components.EightPointCropScreen
 import com.nothing.pdfmaker.ui.components.ImageStudioModal
 import com.nothing.pdfmaker.ui.components.NothingHeader
-import com.nothing.pdfmaker.ui.components.ScanColorMode
 import com.nothing.pdfmaker.ui.components.ScannerCards
-import com.nothing.pdfmaker.ui.theme.NothingBlack
-import com.nothing.pdfmaker.ui.theme.NothingGray
+import com.nothing.pdfmaker.ui.components.SettingsDialog
 import com.nothing.pdfmaker.ui.theme.NothingLensTheme
 import com.nothing.pdfmaker.ui.theme.NothingRed
 import com.nothing.pdfmaker.ui.theme.NothingWhite
@@ -71,7 +70,6 @@ import com.nothing.pdfmaker.util.BitmapUtil
 import com.nothing.pdfmaker.util.ImageToPdfConverter
 import com.nothing.pdfmaker.util.PdfStorageManager
 import kotlinx.coroutines.launch
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -80,15 +78,28 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            NothingLensTheme {
-                PDFMakerApp()
+            val context = LocalContext.current
+            val prefs = remember { context.getSharedPreferences("doclens_prefs", Context.MODE_PRIVATE) }
+            var isDarkMode by remember { mutableStateOf(prefs.getBoolean("is_dark_mode", true)) }
+
+            NothingLensTheme(isDarkTheme = isDarkMode) {
+                PDFMakerApp(
+                    isDarkMode = isDarkMode,
+                    onToggleDarkMode = { enabled ->
+                        isDarkMode = enabled
+                        prefs.edit().putBoolean("is_dark_mode", enabled).apply()
+                    }
+                )
             }
         }
     }
 }
 
 @Composable
-fun PDFMakerApp() {
+fun PDFMakerApp(
+    isDarkMode: Boolean,
+    onToggleDarkMode: (Boolean) -> Unit
+) {
     val context = LocalContext.current
     val activity = context as? Activity
     val scope = rememberCoroutineScope()
@@ -98,11 +109,11 @@ fun PDFMakerApp() {
     var selectedGalleryUris by remember { mutableStateOf<List<Uri>?>(null) }
     var isGeneratingFromGallery by remember { mutableStateOf(false) }
 
-    // 8-Point Crop State
-    var activeEightPointBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var pendingCameraCaptureUri by remember { mutableStateOf<Uri?>(null) }
+    // Settings sheet
+    var showSettingsDialog by remember { mutableStateOf(false) }
 
-    var currentScanMode by remember { mutableStateOf(ScanColorMode.NATURAL_FAST) }
+    // 8-Point Crop State (for imported or custom images)
+    var activeEightPointBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     fun refreshDocuments() {
         scope.launch {
@@ -116,35 +127,7 @@ fun PDFMakerApp() {
         refreshDocuments()
     }
 
-    // High-Resolution Camera Capture for 8-Point Crop
-    val takePictureLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicture()
-    ) { success ->
-        if (success && pendingCameraCaptureUri != null) {
-            scope.launch {
-                val b = BitmapUtil.loadBitmap(context, pendingCameraCaptureUri!!)
-                if (b != null) {
-                    activeEightPointBitmap = b
-                }
-            }
-        }
-    }
-
-    fun launchEightPointCamera() {
-        try {
-            val dir = File(context.filesDir, "camera_captures")
-            if (!dir.exists()) dir.mkdirs()
-            val file = File(dir, "capture_${System.currentTimeMillis()}.jpg")
-            val authority = "${context.packageName}.fileprovider"
-            val uri = FileProvider.getUriForFile(context, authority, file)
-            pendingCameraCaptureUri = uri
-            takePictureLauncher.launch(uri)
-        } catch (e: Exception) {
-            Toast.makeText(context, "Camera error: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    // Google ML Kit Document Scanner setup
+    // Google ML Kit Document Scanner setup (Scan Now - rock solid, no camera errors)
     val scannerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult()
     ) { activityResult ->
@@ -197,14 +180,8 @@ fun PDFMakerApp() {
         }
     }
 
-    fun startAutoScanning() {
+    fun startScanNow() {
         if (activity == null) return
-
-        val scannerMode = if (currentScanMode == ScanColorMode.NATURAL_FAST) {
-            GmsDocumentScannerOptions.SCANNER_MODE_BASE
-        } else {
-            GmsDocumentScannerOptions.SCANNER_MODE_FULL
-        }
 
         val scannerOptions = GmsDocumentScannerOptions.Builder()
             .setGalleryImportAllowed(true)
@@ -213,7 +190,7 @@ fun PDFMakerApp() {
                 GmsDocumentScannerOptions.RESULT_FORMAT_JPEG,
                 GmsDocumentScannerOptions.RESULT_FORMAT_PDF
             )
-            .setScannerMode(scannerMode)
+            .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_BASE) // Natural fast capture, true colors
             .build()
 
         val scannerClient = GmsDocumentScanning.getClient(scannerOptions)
@@ -227,13 +204,13 @@ fun PDFMakerApp() {
             .addOnFailureListener { error ->
                 Toast.makeText(
                     context,
-                    "Failed to open scanner: ${error.localizedMessage}",
+                    "Failed to open camera scanner: ${error.localizedMessage}",
                     Toast.LENGTH_LONG
                 ).show()
             }
     }
 
-    // Direct Gallery Photo Picker
+    // Direct Gallery Photo Picker (Choose from Gallery)
     val galleryPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(50)
     ) { uris ->
@@ -242,7 +219,7 @@ fun PDFMakerApp() {
         }
     }
 
-    // If full-screen 8-Point Crop is active, show it immediately
+    // Full-screen 8-Point Crop overlay if active
     if (activeEightPointBitmap != null) {
         EightPointCropScreen(
             bitmap = activeEightPointBitmap!!,
@@ -262,17 +239,18 @@ fun PDFMakerApp() {
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        containerColor = NothingBlack,
+        containerColor = MaterialTheme.colorScheme.background,
         floatingActionButton = {
+            // Red circular button in bottom right: starts "Scan Now" reliably without camera error
             FloatingActionButton(
-                onClick = { launchEightPointCamera() },
+                onClick = { startScanNow() },
                 containerColor = NothingRed,
                 contentColor = NothingWhite,
                 shape = CircleShape
             ) {
                 Icon(
-                    imageVector = Icons.Default.Crop,
-                    contentDescription = "8-Point Precision Crop"
+                    imageVector = Icons.Default.CameraAlt,
+                    contentDescription = "Scan Now"
                 )
             }
         }
@@ -281,22 +259,21 @@ fun PDFMakerApp() {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
-            color = NothingBlack
+            color = MaterialTheme.colorScheme.background
         ) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize()
             ) {
                 item {
-                    NothingHeader()
+                    NothingHeader(
+                        onOpenSettings = { showSettingsDialog = true }
+                    )
                 }
 
                 item {
                     ScannerCards(
-                        currentMode = currentScanMode,
-                        onModeChange = { currentScanMode = it },
-                        onStartEightPointScan = { launchEightPointCamera() },
-                        onStartAutoScan = { startAutoScanning() },
-                        onImportImages = {
+                        onScanNow = { startScanNow() },
+                        onChooseFromGallery = {
                             galleryPicker.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                             )
@@ -315,7 +292,7 @@ fun PDFMakerApp() {
                     ) {
                         Text(
                             text = "RECENT SCANS",
-                            color = NothingGray,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
@@ -324,7 +301,7 @@ fun PDFMakerApp() {
 
                         Text(
                             text = "${savedDocuments.size} FILES",
-                            color = NothingGray,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace
                         )
@@ -347,19 +324,19 @@ fun PDFMakerApp() {
                                 Icon(
                                     imageVector = Icons.Default.Description,
                                     contentDescription = null,
-                                    tint = NothingGray.copy(alpha = 0.4f),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                                     modifier = Modifier.size(56.dp)
                                 )
                                 Text(
                                     text = "NO SCANNED DOCUMENTS YET",
-                                    color = NothingGray,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     fontSize = 12.sp,
                                     fontFamily = FontFamily.Monospace,
                                     letterSpacing = 1.sp
                                 )
                                 Text(
-                                    text = "Tap '8-POINT PRECISION CROP' to take a photo with 8-point handles",
-                                    color = NothingGray.copy(alpha = 0.7f),
+                                    text = "Tap 'Scan Now' to scan pages or import pictures",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                                     fontSize = 12.sp
                                 )
                             }
@@ -389,6 +366,15 @@ fun PDFMakerApp() {
                     Spacer(modifier = Modifier.height(90.dp))
                 }
             }
+        }
+
+        // Settings Dialog / Sheet
+        if (showSettingsDialog) {
+            SettingsDialog(
+                isDarkMode = isDarkMode,
+                onToggleDarkMode = { onToggleDarkMode(it) },
+                onDismiss = { showSettingsDialog = false }
+            )
         }
 
         // Gallery to PDF Studio Modal

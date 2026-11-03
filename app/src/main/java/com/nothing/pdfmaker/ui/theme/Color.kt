@@ -8,6 +8,13 @@ val NothingSurface = Color(0xFF16171A)
 val NothingSurfaceLight = Color(0xFF222328)
 val NothingBorder = Color(0xFF2C2E35)
 
+val NothingLightBackground = Color(0xFFF7F8FA)
+val NothingLightSurface = Color(0xFFFFFFFF)
+val NothingLightSurfaceVariant = Color(0xFFF0F1F3)
+val NothingLightBorder = Color(0xFFE2E4E8)
+val NothingLightText = Color(0xFF111215)
+val NothingLightSubtext = Color(0xFF6B7280)
+
 val NothingRed = Color(0xFFD71921)
 val NothingWhite = Color(0xFFF7F7F8)
 val NothingGray = Color(0xFF8E9096)
